@@ -33,7 +33,6 @@ jobs:
           python manage.py test -v 2
 
   build-and-push:
-    # run this only if tests passed
     needs: test
     runs-on: ubuntu-latest
     env:
@@ -53,8 +52,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build the image and load it into the local Docker so we can run it
-      - name: Build Docker image (no push)
+      - name: Build Docker image (load for tests)
         uses: docker/build-push-action@v3
         with:
           context: .
@@ -62,36 +60,34 @@ jobs:
           tags: ${{ env.IMAGE_LOCAL }}
           load: true
 
-      # Smoke test the container by hitting /ping
       - name: Test Docker image
+        shell: bash
         run: |
+          set -euo pipefail
           docker run --name test-container -d -p 8000:8000 ${{ env.IMAGE_LOCAL }}
 
-      for i in {1..30}; do
-        # follow redirects (-L), fail on HTTP errors (-f), quiet output (-s)
-        if curl -fsSL http://127.0.0.1:8000/ping/ | grep -qi "pong"; then
-          echo "Application is responding on /ping/"
-          break
-        fi
+          for i in {1..30}; do
+            # follow redirects (-L), be quiet (-s), fail on HTTP errors (-f)
+            if curl -fsSL http://127.0.0.1:8000/ping/ | grep -qi "pong"; then
+              echo "OK: /ping/ responded"
+              break
+            fi
+            # fallback: check root page
+            if curl -fsSL http://127.0.0.1:8000/ | grep -qi "Ping"; then
+              echo "OK: root responded"
+              break
+            fi
+            echo "Retry $i – waiting 1 sec..."
+            sleep 1
+            if [ $i -eq 30 ]; then
+              echo "Application test timed out — container logs:"
+              docker logs test-container || true
+              exit 1
+            fi
+          done
 
-        # fallback: root page contains 'Ping' text
-        if curl -fsSL http://127.0.0.1:8000/ | grep -qi "Ping"; then
-          echo "Application root is responding"
-          break
-        fi
+          docker rm -f test-container
 
-        echo "Retry $i – waiting 1 sec..."
-        sleep 1
-        if [ $i -eq 30 ]; then
-          echo "Application test timed out"
-          docker logs test-container || true
-          exit 1
-        fi
-      done
-
-      docker rm -f test-container
-
-      # Tag with short SHA + latest and push to Docker Hub (not for PRs)
       - name: Tag and push Docker image
         if: github.event_name != 'pull_request'
         run: |
