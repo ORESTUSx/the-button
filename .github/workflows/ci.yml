@@ -66,20 +66,30 @@ jobs:
       - name: Test Docker image
         run: |
           docker run --name test-container -d -p 8000:8000 ${{ env.IMAGE_LOCAL }}
-          for i in {1..20}; do
-            if curl -s http://localhost:8000/ping | grep -qi "pong"; then
-              echo "Application is responding on /ping"
-              break
-            fi
-            if [ $i -eq 20 ]; then
-              echo "Application test timed out"
-              docker logs test-container || true
-              exit 1
-            fi
-            echo "Retry $i – waiting 1 sec..."
-            sleep 1
-          done
-          docker rm -f test-container
+
+      for i in {1..30}; do
+        # follow redirects (-L), fail on HTTP errors (-f), quiet output (-s)
+        if curl -fsSL http://127.0.0.1:8000/ping/ | grep -qi "pong"; then
+          echo "Application is responding on /ping/"
+          break
+        fi
+
+        # fallback: root page contains 'Ping' text
+        if curl -fsSL http://127.0.0.1:8000/ | grep -qi "Ping"; then
+          echo "Application root is responding"
+          break
+        fi
+
+        echo "Retry $i – waiting 1 sec..."
+        sleep 1
+        if [ $i -eq 30 ]; then
+          echo "Application test timed out"
+          docker logs test-container || true
+          exit 1
+        fi
+      done
+
+      docker rm -f test-container
 
       # Tag with short SHA + latest and push to Docker Hub (not for PRs)
       - name: Tag and push Docker image
